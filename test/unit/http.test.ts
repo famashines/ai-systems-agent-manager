@@ -19,6 +19,7 @@ const names: Names = {
   find: (name) => Promise.resolve(taken.get(name)),
 };
 const deps = { store, names, newId: fakeIds(2) };
+const quiet = { warn: () => undefined };
 const app = createService({
   logger: createLogger({ service: "agent-manager", release: "test", level: "silent" }),
   routes: routes(deps),
@@ -27,7 +28,7 @@ const app = createService({
 let base: string;
 
 before(async () => {
-  await seed(deps);
+  await seed(deps, quiet);
   const { port } = await app.listen(0, "127.0.0.1");
   base = `http://127.0.0.1:${String(port)}`;
 });
@@ -91,7 +92,7 @@ test("the seeds give an enabled orchestrator and writer with version 1", async (
 
 test("the seed a second time adds no event", async () => {
   const count = (await store.readAll({ limit: 1000 })).length;
-  assert.deepEqual(await seed(deps), []);
+  assert.deepEqual(await seed(deps, quiet), []);
   assert.equal((await store.readAll({ limit: 1000 })).length, count);
 });
 
@@ -214,6 +215,12 @@ test("a stale expectedVersion gives 409", async () => {
 for (const [name, route, body, path] of [
   ["a bad name", "create-agent", envelope("CreateAgent", { name: "Writer" }), "body.payload.name"],
   ["a bad type", "create-agent", envelope("CreateTask", { name: "a" }), "body.type"],
+  [
+    "a create expectedVersion that is not 0",
+    "create-agent",
+    envelope("CreateAgent", { name: "a" }, { expectedVersion: 3 }),
+    "body.expectedVersion",
+  ],
   [
     "an agent actor",
     "create-agent",

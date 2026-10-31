@@ -57,11 +57,20 @@ test("the seed skips a seed that another pod wrote at the same time", async () =
     names,
     newId,
   };
-  assert.deepEqual(await seed(racing), []);
+  const warned: unknown[] = [];
+  const logger = { warn: (details: object) => warned.push(details) };
+  assert.deepEqual(await seed(racing, logger), []);
+  assert.deepEqual(
+    warned.map((details) => (details as { agent: string }).agent),
+    ["orchestrator", "writer"],
+  );
 });
 
 test("the seed stops on a database error", async () => {
-  await assert.rejects(seed({ store, names, newId }), MongoServerSelectionError);
+  await assert.rejects(
+    seed({ store, names, newId }, { warn: () => undefined }),
+    MongoServerSelectionError,
+  );
 });
 
 const env = {

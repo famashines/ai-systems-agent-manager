@@ -28,7 +28,7 @@ import {
   type Input,
 } from "../application/agents.ts";
 
-const command = <T extends string, P extends z.ZodType>(type: T, payload: P) =>
+const command = (type: string, payload: z.ZodType) =>
   CommandEnvelopeV1(payload).extend({
     type: z.literal(type),
     actor: Actor.extend({ kind: z.literal("owner") }),
@@ -58,18 +58,16 @@ const guard =
   };
 
 export function routes(deps: Deps): Route[] {
-  const commandRoute = <P extends z.ZodType>(
+  const commandRoute = <P>(
     name: string,
-    type: string,
-    payload: P,
-    run: (deps: Deps, input: Input<z.output<P>>) => Promise<{ answer: Answer; replayed: boolean }>,
+    schema: z.ZodType,
+    run: (deps: Deps, input: Input<P>) => Promise<{ answer: Answer; replayed: boolean }>,
     createdStatus: number,
   ): Route => ({
     method: "POST",
     path: `/internal/commands/${name}`,
     handler: guard(async (request: Request) => {
-      const body = (await validate(request, { body: command(type, payload) }))
-        .body as CommandEnvelopeV1<z.output<P>>;
+      const body = (await validate(request, { body: schema })).body as CommandEnvelopeV1<P>;
       const { commandId, actor, expectedVersion } = body;
       const { answer, replayed } = await run(deps, {
         commandId,
@@ -84,29 +82,27 @@ export function routes(deps: Deps): Route[] {
   return [
     commandRoute(
       "create-agent",
-      "agents.CreateAgent",
-      CreateAgentCommandPayloadV1,
+      command("agents.CreateAgent", CreateAgentCommandPayloadV1).extend({
+        expectedVersion: z.literal(0).exactOptional(),
+      }),
       createAgent,
       201,
     ),
     commandRoute(
       "publish-agent-version",
-      "agents.PublishAgentVersion",
-      PublishAgentVersionCommandPayloadV1,
+      command("agents.PublishAgentVersion", PublishAgentVersionCommandPayloadV1),
       publishAgentVersion,
       201,
     ),
     commandRoute(
       "activate-agent-version",
-      "agents.ActivateAgentVersion",
-      ActivateAgentVersionCommandPayloadV1,
+      command("agents.ActivateAgentVersion", ActivateAgentVersionCommandPayloadV1),
       activateAgentVersion,
       200,
     ),
     commandRoute(
       "set-agent-enabled",
-      "agents.SetAgentEnabled",
-      SetAgentEnabledCommandPayloadV1,
+      command("agents.SetAgentEnabled", SetAgentEnabledCommandPayloadV1),
       setAgentEnabled,
       200,
     ),

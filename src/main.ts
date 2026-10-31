@@ -50,7 +50,7 @@ export async function start(config: Readonly<Config>, options: { drainDelayMs?: 
     names: mongoNames(mongo.db),
     newId: randomUUID,
   };
-  const added = await seed(deps);
+  const added = await seed(deps, logger);
   if (added.length > 0) logger.info({ agents: added }, "seed agents added");
   logger.info("connecting to NATS");
   const nats = await connectNats({

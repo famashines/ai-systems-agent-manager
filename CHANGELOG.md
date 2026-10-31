@@ -15,6 +15,10 @@
 - Unique agent names in the collection `agent_names`, written in the
   transaction of `AgentCreated`.
 - Seeds at start: the agents `orchestrator` and `writer`, version 1,
-  active and enabled, with fixed ids.
+  active and enabled, with fixed ids and a task allowance of 0.05 USD.
+  A seed that a conflict skips gives a warn log.
+- A wrong `expectedVersion` gives the first answer for a known
+  `commandId`, else 409 with no write. The decision always uses the
+  version that the service read.
 - Outbox relay to the stream `AGENTS`, `/health`, `/ready`, `/metrics`.
 - Container image and release workflow as in orchestration.

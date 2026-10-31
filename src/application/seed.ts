@@ -24,7 +24,7 @@ const models = [
   "mistralai/mistral-small-3.2-24b-instruct",
 ];
 
-const limits: AgentLimits = { maxCalls: 10, maxTokens: 4096, maxCostMicroUsd: 20_000 };
+const limits: AgentLimits = { maxCalls: 10, maxTokens: 4096, maxCostMicroUsd: 50_000 };
 
 export const seeds: readonly Seed[] = [
   {
@@ -58,7 +58,15 @@ export function seedEvents({ agentId, name, prompt, models, limits }: Seed): Age
   });
 }
 
-export async function seed(deps: Deps, list: readonly Seed[] = seeds): Promise<string[]> {
+export interface SeedLogger {
+  warn(details: object, message: string): void;
+}
+
+export async function seed(
+  deps: Deps,
+  logger: SeedLogger,
+  list: readonly Seed[] = seeds,
+): Promise<string[]> {
   const added: string[] = [];
   for (const item of list) {
     const streamId = agentStreamId(item.agentId);
@@ -79,6 +87,7 @@ export async function seed(deps: Deps, list: readonly Seed[] = seeds): Promise<s
       added.push(item.name);
     } catch (error) {
       if (!(error instanceof ConflictError)) throw error;
+      logger.warn({ agent: item.name, err: error }, "seed skipped because of a conflict");
     }
   }
   return added;

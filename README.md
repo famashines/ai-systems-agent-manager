@@ -50,7 +50,8 @@ service adds the seed agents that are not there. A seed is one append with
 `AgentEnabled`. The actor is `{ kind: "system", id: "agent-manager" }`.
 The service checks the stream first, so it does not use the `commands`
 TTL. Two pods that start at the same time: one append wins, the other gets
-a conflict and skips the seed. A seed never changes an agent that exists.
+a conflict, skips the seed and writes a warn log with the agent name. A
+seed never changes an agent that exists.
 To change a seed agent, publish and activate a new version.
 
 The ids are fixed, UUID v4 in form, and the same in prompt-studio:
@@ -65,7 +66,13 @@ Both seeds have the same model chain and limits:
 | Field    | Value                                                                                             |
 | -------- | ------------------------------------------------------------------------------------------------- |
 | `models` | `google/gemini-2.5-flash-lite`, `openai/gpt-4.1-nano`, `mistralai/mistral-small-3.2-24b-instruct` |
-| `limits` | `maxCalls` 10, `maxTokens` 4096, `maxCostMicroUsd` 20000 (0.02 USD for each call)                 |
+| `limits` | `maxCalls` 10, `maxTokens` 4096, `maxCostMicroUsd` 50000 (0.05 USD for each task)                 |
+
+`maxCostMicroUsd` is the allowance of the agent for one task, not a limit
+for each call (ADR 0027). Orchestration (task M2-06) sends the rest of the
+allowance as `CallRequested.maxCostMicroUsd`. 50000 micro-USD is about 12
+calls at the worst case of 0.004 USD each, so `maxCalls` 10 stops a task
+first.
 
 ## API
 
@@ -116,9 +123,13 @@ call the command routes. The body is a
   answer with 200 and writes nothing.
 - `actor.kind` must be `owner`. api-gateway sets `actor.id` to the `sub`
   of the token.
-- `expectedVersion` is optional. With it, the last event of the stream
-  must have this version. Without it, the service uses the version that it
-  read, so a change between the read and the append gives 409.
+- `expectedVersion` is optional. For `create-agent` it can only be `0`
+  (else 400). The service always decides on the stream that it read and
+  appends with that version, so a change between the read and the append
+  gives 409. If `expectedVersion` is not the version that it read, the
+  service first looks up the `commandId`: a known `commandId` gives the
+  first answer with 200 (a retry with an old `expectedVersion`), else the
+  answer is 409 and the service writes nothing.
 - Events have `correlationId` and `causationId` = the `commandId`, and the
   `actor` of the command.
 
@@ -160,6 +171,16 @@ read, and only projections call the replay API, as for orchestration.
 `agent_names` makes the name unique (a duplicate `_id` gives 409) and maps
 a name to its agent. It is not a projection: it changes only with
 `AgentCreated`, and there is no rename.
+
+## Known limits
+
+- The same `commandId` with another body, or on another command route,
+  gives the first answer. The kit stores the answer of a command but no
+  hash of its body. A later kit version can store a hash and give 409.
+- The `commandId` lookup for a wrong `expectedVersion` is an append with
+  `expectedVersion: -1` and no events. The kit checks the `commandId`
+  before the version, so a known `commandId` gives its answer, and every
+  other case fails the version check and writes nothing.
 
 ## Configuration
 
