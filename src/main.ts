@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { createJwtVerifier } from "@famashines/ai-systems-kit/auth";
 import { commonEnv, loadConfig } from "@famashines/ai-systems-kit/config";
 import { createEventStore, eventStoreMigration } from "@famashines/ai-systems-kit/event-store";
 import { createService } from "@famashines/ai-systems-kit/http";
@@ -12,8 +11,6 @@ import { mongoNames } from "./adapters/names.ts";
 import { seed } from "./application/seed.ts";
 
 export const service = "agent-manager";
-
-const httpUrl = z.url({ protocol: /^https?$/ });
 
 export const envSchema = commonEnv.omit({ SERVICE_NAME: true }).extend({
   MONGODB_URI: z.string().min(1),
@@ -30,10 +27,6 @@ export const envSchema = commonEnv.omit({ SERVICE_NAME: true }).extend({
     .pipe(z.array(z.string()).min(1)),
   NATS_USER: z.string().min(1),
   NATS_PASSWORD: z.string().min(1),
-  OIDC_ISSUER: httpUrl.default("https://auth.famashines.com/realms/ai-systems"),
-  OIDC_JWKS_URL: httpUrl.optional(),
-  OIDC_AUDIENCE: z.string().min(1).default("ai-systems-app"),
-  REQUIRED_ROLE: z.string().min(1).default("owner"),
   OTEL_EXPORTER_OTLP_ENDPOINT: z.url().optional(),
   OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: z.url().optional(),
 });
@@ -68,16 +61,9 @@ export async function start(config: Readonly<Config>, options: { drainDelayMs?: 
     logger,
   });
   const relay = startRelay({ store: deps.store, nats, streams: ["AGENTS"] });
-  const verify = createJwtVerifier({
-    issuer: config.OIDC_ISSUER,
-    audience: config.OIDC_AUDIENCE,
-    requiredRole: config.REQUIRED_ROLE,
-    ...(config.OIDC_JWKS_URL === undefined ? {} : { jwksUrl: config.OIDC_JWKS_URL }),
-    logger,
-  });
   const app = createService({
     logger,
-    routes: routes({ ...deps, verify }),
+    routes: routes(deps),
     readiness: {
       mongo: mongo.ready,
       migrations: async () =>

@@ -1,7 +1,5 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { createServer, type Server } from "node:http";
-import type { AddressInfo } from "node:net";
 import { after, before, test } from "node:test";
 import { jetstreamManager, type JetStreamManager } from "@nats-io/jetstream";
 import { ActiveAgentVersionResultV1 } from "@famashines/ai-systems-contracts";
@@ -16,7 +14,6 @@ import {
   waitFor,
   type Started,
 } from "@famashines/ai-systems-kit/testing";
-import { exportJWK, generateKeyPair, SignJWT, type CryptoKey } from "jose";
 import { seeds } from "../../src/application/seed.ts";
 import { envSchema, start } from "../../src/main.ts";
 
@@ -66,16 +63,12 @@ accounts {
 }
 `;
 
-const issuer = "http://issuer.test/realms/ai-systems";
 const logger = createLogger({ service: "test", release: "test", level: "silent" });
 let mongoContainer: Started;
 let natsContainer: Started;
 let mongo: Mongo;
 let admin: Nats;
 let manager: JetStreamManager;
-let jwks: Server;
-let jwksUrl = "";
-let privateKey: CryptoKey;
 let running: Awaited<ReturnType<typeof start>> | undefined;
 let base = "";
 
@@ -85,8 +78,6 @@ const startService = async (): Promise<void> => {
     NATS_SERVERS: natsContainer.url,
     NATS_USER: "ai-systems-agent-manager",
     NATS_PASSWORD: "agent-manager",
-    OIDC_ISSUER: issuer,
-    OIDC_JWKS_URL: jwksUrl,
     LOG_LEVEL: "silent",
   });
   running = await start({ ...config, PORT: 0 }, { drainDelayMs: 0 });
@@ -101,16 +92,6 @@ const stopService = async (): Promise<void> => {
 };
 
 before(async () => {
-  const pair = await generateKeyPair("RS256", { extractable: true });
-  privateKey = pair.privateKey;
-  const jwk = { ...(await exportJWK(pair.publicKey)), kid: "k1", alg: "RS256", use: "sig" };
-  jwks = createServer((_request, response) => {
-    response
-      .writeHead(200, { "content-type": "application/json" })
-      .end(JSON.stringify({ keys: [jwk] }));
-  });
-  await new Promise<void>((resolve) => jwks.listen(0, "127.0.0.1", resolve));
-  jwksUrl = `http://127.0.0.1:${String((jwks.address() as AddressInfo).port)}/certs`;
   [mongoContainer, natsContainer] = await Promise.all([
     startMongo(),
     startNats({ config: natsConfig }),
@@ -132,38 +113,17 @@ after(async () => {
   await stopService();
   await admin.close();
   await mongo.close();
-  jwks.closeAllConnections();
-  await new Promise((resolve) => jwks.close(resolve));
   await Promise.all([mongoContainer.stop(), natsContainer.stop()]);
 });
 
-const now = (): number => Math.floor(Date.now() / 1000);
-
-const token = (roles = ["owner"]): Promise<string> =>
-  new SignJWT({
-    iss: issuer,
-    aud: ["ai-systems-app", "account"],
-    sub: "owner-1",
-    iat: now(),
-    exp: now() + 300,
-    typ: "Bearer",
-    azp: "ai-systems-app",
-    realm_access: { roles },
-  })
-    .setProtectedHeader({ alg: "RS256", kid: "k1" })
-    .sign(privateKey);
-
-const send = async (name: string, type: string, payload: unknown, roles?: string[]) =>
+const send = (name: string, type: string, payload: unknown, kind = "owner") =>
   fetch(`${base}/internal/commands/${name}`, {
     method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${await token(roles)}`,
-    },
+    headers: { "content-type": "application/json" },
     body: JSON.stringify({
       commandId: randomUUID(),
       type: `agents.${type}`,
-      actor: { kind: "owner", id: "owner-1" },
+      actor: { kind, id: "owner-1" },
       payload,
     }),
   });
@@ -213,7 +173,7 @@ test("the active version of a seed is the contracts result", async () => {
   assert.deepEqual(result, { ...seeds[0], version: 1, enabled: true });
 });
 
-test("a new agent, two versions and a rollback, with real tokens", async () => {
+test("a new agent, two versions and a rollback", async () => {
   const created = await send("create-agent", "CreateAgent", { name: "researcher" });
   assert.equal(created.status, 201);
   const { agentId } = (await created.json()) as { agentId: string };
@@ -253,7 +213,7 @@ test("a name that exists gives 409 and writes no event", async () => {
   assert.equal(await events().countDocuments(), count);
 });
 
-test("a token without the owner role gives 403", async () => {
-  const response = await send("create-agent", "CreateAgent", { name: "guest" }, ["viewer"]);
-  assert.equal(response.status, 403);
+test("a command from an actor that is not the owner gives 400", async () => {
+  const response = await send("create-agent", "CreateAgent", { name: "guest" }, "agent");
+  assert.equal(response.status, 400);
 });

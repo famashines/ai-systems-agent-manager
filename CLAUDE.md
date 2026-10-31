@@ -55,8 +55,7 @@ The NATS config in the test has the grants of the user
 gitops. Wait with `waitFor`, never with a fixed sleep. Pass
 `drainDelayMs: 0` to `start()`. The restart test calls `start()` two times
 in one process, so `startTelemetry` runs two times. This is only in the
-tests. The test signs RS256 tokens with `jose` and serves the JWKS on a
-local port (`OIDC_JWKS_URL`).
+tests.
 
 The CI job `integration` runs on `ubuntu-22.04`: `mongo:8.0.34` does not
 start on the kernel of `ubuntu-24.04`. See the kit `CLAUDE.md`.

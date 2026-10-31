@@ -30,14 +30,14 @@ export const seeds: readonly Seed[] = [
   {
     agentId: "00000000-0000-4000-8000-00000000a001",
     name: "orchestrator",
-    prompt: { promptId: "00000000-0000-4000-8000-00000000b001", version: 1 },
+    prompt: { promptId: "a0d53ff1-1eda-4636-bb2f-880df141bcb9", version: 1 },
     models,
     limits,
   },
   {
     agentId: "00000000-0000-4000-8000-00000000a002",
     name: "writer",
-    prompt: { promptId: "00000000-0000-4000-8000-00000000b002", version: 1 },
+    prompt: { promptId: "cc74090a-534e-4072-8bfd-e6c5b9f22f41", version: 1 },
     models,
     limits,
   },

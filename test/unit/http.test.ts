@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
-import { createService, ForbiddenError, UnauthorizedError } from "@famashines/ai-systems-kit/http";
+import { createService } from "@famashines/ai-systems-kit/http";
 import { createLogger } from "@famashines/ai-systems-kit/observability";
 import { createMemoryEventStore, fakeClock, fakeIds } from "@famashines/ai-systems-kit/testing";
 import { routes } from "../../src/adapters/http.ts";
@@ -19,14 +19,9 @@ const names: Names = {
   find: (name) => Promise.resolve(taken.get(name)),
 };
 const deps = { store, names, newId: fakeIds(2) };
-const verify = (token: string) => {
-  if (token === "owner-token") return Promise.resolve({ sub: "owner-1", roles: ["owner"], exp: 1 });
-  if (token === "guest-token") return Promise.reject(new ForbiddenError());
-  return Promise.reject(new UnauthorizedError());
-};
 const app = createService({
   logger: createLogger({ service: "agent-manager", release: "test", level: "silent" }),
-  routes: routes({ ...deps, verify }),
+  routes: routes(deps),
   drainDelayMs: 0,
 });
 let base: string;
@@ -43,13 +38,13 @@ after(async () => {
 
 const commandIds = fakeIds(3);
 const owner = { kind: "owner", id: "owner-1" } as const;
-const prompt = { promptId: "00000000-0000-4000-8000-00000000b002", version: 1 };
+const prompt = { promptId: "cc74090a-534e-4072-8bfd-e6c5b9f22f41", version: 1 };
 const limits = { maxCalls: 5, maxTokens: 1000, maxCostMicroUsd: 5000 };
 
-const send = (name: string, body: unknown, token = "owner-token") =>
+const send = (name: string, body: unknown) =>
   fetch(`${base}/internal/commands/${name}`, {
     method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
 
@@ -216,24 +211,6 @@ test("a stale expectedVersion gives 409", async () => {
   );
 });
 
-test("a command with no token gives 401, a token with no owner role gives 403", async () => {
-  const command = envelope("CreateAgent", { name: "nobody" });
-  await problem(await send("create-agent", command, "bad-token"), 401, "unauthorized");
-  await problem(await send("create-agent", command, "guest-token"), 403, "forbidden");
-  const none = await fetch(`${base}/internal/commands/create-agent`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(command),
-  });
-  await problem(none, 401, "unauthorized");
-  assert.equal(await names.find("nobody"), undefined);
-});
-
-test("an actor that is not the token subject gives 403", async () => {
-  const command = envelope("CreateAgent", { name: "other" }, { actor: { kind: "owner", id: "x" } });
-  await problem(await send("create-agent", command), 403, "forbidden");
-});
-
 for (const [name, route, body, path] of [
   ["a bad name", "create-agent", envelope("CreateAgent", { name: "Writer" }), "body.payload.name"],
   ["a bad type", "create-agent", envelope("CreateTask", { name: "a" }), "body.type"],
@@ -276,7 +253,7 @@ for (const [name, route, body, path] of [
   });
 }
 
-test("the active version read needs no token and refuses a bad name", async () => {
+test("the active version read refuses a bad name and an unknown name", async () => {
   assert.equal((await active("orchestrator")).status, 200);
   await problem(await active("Bad_Name"), 400, "validation_failed");
   await problem(await active("unknown"), 404, "not_found");

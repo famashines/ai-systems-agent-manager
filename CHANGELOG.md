@@ -6,9 +6,9 @@
   `PublishAgentVersion`, `ActivateAgentVersion`, `SetAgentEnabled` give the
   `agents.*` events of contracts v0.3.0 (schema version 1). A rollback is an
   activation of an older version.
-- Owner commands on `POST /internal/commands/<name>`: a bearer token with
-  the realm role `owner` (kit/auth), the actor id must be the token
-  subject, command idempotency by `commandId`.
+- Owner commands on `POST /internal/commands/<name>`: only an `owner`
+  actor (api-gateway checks the token), command idempotency by
+  `commandId`.
 - `GET /internal/agents/by-name/:name/active-version`: the
   `ActiveAgentVersionResultV1` for orchestration.
 - `GET /internal/events`: the replay API in position order.

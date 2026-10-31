@@ -17,7 +17,7 @@ const names = { claim: down, find: down };
 const newId = () => "00000000-0000-4000-8000-000000000001";
 const app = createService({
   logger: createLogger({ service: "agent-manager", release: "test", level: "silent" }),
-  routes: routes({ store, names, newId, verify: down }),
+  routes: routes({ store, names, newId }),
   drainDelayMs: 0,
 });
 let base: string;
@@ -77,16 +77,11 @@ test("the config has the defaults and trims NATS_SERVERS", () => {
   });
   assert.deepEqual(config.NATS_SERVERS, ["nats://a:4222", "nats://b:4222"]);
   assert.equal(config.MONGODB_DATABASE, "agent_manager");
-  assert.equal(config.OIDC_ISSUER, "https://auth.famashines.com/realms/ai-systems");
-  assert.equal(config.OIDC_AUDIENCE, "ai-systems-app");
-  assert.equal(config.REQUIRED_ROLE, "owner");
-  assert.equal(config.OIDC_JWKS_URL, undefined);
 });
 
 for (const [name, value] of [
   ["NATS_SERVERS", " , ,"],
-  ["OIDC_ISSUER", "ftp://auth"],
-  ["OIDC_JWKS_URL", "not a url"],
+  ["MONGODB_URI", ""],
 ] as const) {
   test(`${name} "${value}" is refused`, () => {
     assert.throws(

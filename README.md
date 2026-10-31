@@ -8,7 +8,7 @@ event to the NATS JetStream stream `AGENTS`. The service is internal: it
 has no Ingress.
 
 ```
-api-gateway --POST /internal/commands/<name> (owner token)--> agent-manager
+api-gateway --POST /internal/commands/<name> (owner actor)--> agent-manager
                                                                 | one transaction
                                                                 v
                                      MongoDB agent_manager: events, commands, agent_names
@@ -57,8 +57,8 @@ The ids are fixed, UUID v4 in form, and the same in prompt-studio:
 
 | Agent          | `agentId`                              | Prompt `promptId` (version 1)          |
 | -------------- | -------------------------------------- | -------------------------------------- |
-| `orchestrator` | `00000000-0000-4000-8000-00000000a001` | `00000000-0000-4000-8000-00000000b001` |
-| `writer`       | `00000000-0000-4000-8000-00000000a002` | `00000000-0000-4000-8000-00000000b002` |
+| `orchestrator` | `00000000-0000-4000-8000-00000000a001` | `a0d53ff1-1eda-4636-bb2f-880df141bcb9` |
+| `writer`       | `00000000-0000-4000-8000-00000000a002` | `cc74090a-534e-4072-8bfd-e6c5b9f22f41` |
 
 Both seeds have the same model chain and limits:
 
@@ -71,10 +71,10 @@ Both seeds have the same model chain and limits:
 
 | Method | Path                                            | Auth                 | Does                                                    |
 | ------ | ----------------------------------------------- | -------------------- | ------------------------------------------------------- |
-| POST   | `/internal/commands/create-agent`               | owner token          | `CreateAgent`                                           |
-| POST   | `/internal/commands/publish-agent-version`      | owner token          | `PublishAgentVersion`                                   |
-| POST   | `/internal/commands/activate-agent-version`     | owner token          | `ActivateAgentVersion`                                  |
-| POST   | `/internal/commands/set-agent-enabled`          | owner token          | `SetAgentEnabled`                                       |
+| POST   | `/internal/commands/create-agent`               | `owner` actor        | `CreateAgent`                                           |
+| POST   | `/internal/commands/publish-agent-version`      | `owner` actor        | `PublishAgentVersion`                                   |
+| POST   | `/internal/commands/activate-agent-version`     | `owner` actor        | `ActivateAgentVersion`                                  |
+| POST   | `/internal/commands/set-agent-enabled`          | `owner` actor        | `SetAgentEnabled`                                       |
 | GET    | `/internal/agents/by-name/:name/active-version` | none (NetworkPolicy) | `ActiveAgentVersionResultV1` for a name                 |
 | GET    | `/internal/events?afterPosition=<n>&limit=<m>`  | none (NetworkPolicy) | Replay API: all events in position order                |
 | GET    | `/health`, `/ready`, `/metrics`                 | none                 | Liveness, readiness (`mongo`, `migrations`), Prometheus |
@@ -83,20 +83,21 @@ Errors are RFC 9457 problem JSON with a `code` (`@famashines/ai-systems-kit/http
 
 ### Commands
 
-Each command needs `Authorization: Bearer <access token>`, checked by
-`kit/auth` (`createJwtVerifier`, realm role `REQUIRED_ROLE`). api-gateway
-sends the token of the owner with the command. The body is a
+api-gateway checks the owner token with `kit/auth` (realm role `owner`)
+and sends the command; this service does not check the token (as
+orchestration and prompt-studio). The NetworkPolicy lets only api-gateway
+call the command routes. The body is a
 `CommandEnvelopeV1` with the payload schema of contracts:
 
 ```json
 {
   "commandId": "6f1c2b9e-1d1a-4c55-9b0e-3a7f0d5e8c21",
   "type": "agents.PublishAgentVersion",
-  "actor": { "kind": "owner", "id": "<sub of the token>" },
+  "actor": { "kind": "owner", "id": "<owner id>" },
   "expectedVersion": 3,
   "payload": {
     "agentId": "00000000-0000-4000-8000-00000000a002",
-    "prompt": { "promptId": "00000000-0000-4000-8000-00000000b002", "version": 2 },
+    "prompt": { "promptId": "cc74090a-534e-4072-8bfd-e6c5b9f22f41", "version": 2 },
     "models": ["google/gemini-2.5-flash-lite", "openai/gpt-4.1-nano"],
     "limits": { "maxCalls": 10, "maxTokens": 4096, "maxCostMicroUsd": 20000 }
   }
@@ -113,8 +114,8 @@ sends the token of the owner with the command. The body is a
 - `commandId` is the idempotency key (api-gateway takes it from the
   `Idempotency-Key` header). The same `commandId` again gives the first
   answer with 200 and writes nothing.
-- `actor.kind` must be `owner`, and `actor.id` must be the `sub` of the
-  token.
+- `actor.kind` must be `owner`. api-gateway sets `actor.id` to the `sub`
+  of the token.
 - `expectedVersion` is optional. With it, the last event of the stream
   must have this version. Without it, the service uses the version that it
   read, so a change between the read and the append gives 409.
@@ -125,15 +126,14 @@ The answer is `{ agentId, version }`, where `version` is the version of
 the stream (for the next `expectedVersion`). Publish also gives
 `agentVersion`, the new agent version number.
 
-| Status   | When                                                                    |
-| -------- | ----------------------------------------------------------------------- |
-| 201      | Create or publish: a new agent or version                               |
-| 200      | Activate or enable; or the same `commandId` came before                 |
-| 400      | The body is not valid (problem JSON with `errors`: paths, never values) |
-| 401, 403 | No valid token; no owner role, or `actor.id` is not the token subject   |
-| 404      | The agent or the agent version does not exist                           |
-| 409      | The name exists, the stream changed, or on with no active version       |
-| 503      | MongoDB does not answer, or the JWKS cannot be read                     |
+| Status | When                                                                    |
+| ------ | ----------------------------------------------------------------------- |
+| 201    | Create or publish: a new agent or version                               |
+| 200    | Activate or enable; or the same `commandId` came before                 |
+| 400    | The body is not valid (problem JSON with `errors`: paths, never values) |
+| 404    | The agent or the agent version does not exist                           |
+| 409    | The name exists, the stream changed, or on with no active version       |
+| 503    | MongoDB does not answer                                                 |
 
 ### `GET /internal/agents/by-name/:name/active-version`
 
@@ -144,9 +144,9 @@ gives 200 with `enabled: false`; the caller decides. An unknown name, or an
 agent with no active version, gives 404. The read uses the event stream,
 so it is strongly consistent with the commands.
 
-This route and `/internal/events` have no token check. The NetworkPolicy
-of the service (task M2-09) must let only orchestration call the read and
-only projections call the replay API, as for orchestration.
+No route has a token check. The NetworkPolicy of the service (task M2-09)
+must let only api-gateway call the commands, only orchestration call the
+read, and only projections call the replay API, as for orchestration.
 
 ## Data
 
@@ -165,21 +165,17 @@ a name to its agent. It is not a projection: it changes only with
 
 Environment variables (`.env.example` has all of them):
 
-| Variable                                                            | Default                                         | Content                                   |
-| ------------------------------------------------------------------- | ----------------------------------------------- | ----------------------------------------- |
-| `MONGODB_URI`                                                       | required                                        | MongoDB connection string (replica set)   |
-| `MONGODB_DATABASE`                                                  | `agent_manager`                                 | Database name                             |
-| `NATS_SERVERS`                                                      | required                                        | NATS URLs, comma-separated; at least one  |
-| `NATS_USER`                                                         | required                                        | `ai-systems-agent-manager` on the cluster |
-| `NATS_PASSWORD`                                                     | required                                        | From the SealedSecret                     |
-| `OIDC_ISSUER`                                                       | `https://auth.famashines.com/realms/ai-systems` | Token issuer                              |
-| `OIDC_JWKS_URL`                                                     | `<issuer>/protocol/openid-connect/certs`        | JWKS inside the cluster                   |
-| `OIDC_AUDIENCE`                                                     | `ai-systems-app`                                | Token audience and `azp`                  |
-| `REQUIRED_ROLE`                                                     | `owner`                                         | Realm role for the commands               |
-| `PORT`                                                              | `8080`                                          | HTTP port                                 |
-| `LOG_LEVEL`                                                         | `info`                                          | pino level                                |
-| `RELEASE`                                                           | `local`                                         | Release id in logs and metrics            |
-| `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | not set                                         | Traces go over OTLP only when one is set  |
+| Variable                                                            | Default         | Content                                   |
+| ------------------------------------------------------------------- | --------------- | ----------------------------------------- |
+| `MONGODB_URI`                                                       | required        | MongoDB connection string (replica set)   |
+| `MONGODB_DATABASE`                                                  | `agent_manager` | Database name                             |
+| `NATS_SERVERS`                                                      | required        | NATS URLs, comma-separated; at least one  |
+| `NATS_USER`                                                         | required        | `ai-systems-agent-manager` on the cluster |
+| `NATS_PASSWORD`                                                     | required        | From the SealedSecret                     |
+| `PORT`                                                              | `8080`          | HTTP port                                 |
+| `LOG_LEVEL`                                                         | `info`          | pino level                                |
+| `RELEASE`                                                           | `local`         | Release id in logs and metrics            |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | not set         | Traces go over OTLP only when one is set  |
 
 A bad value stops the process at start with the variable name. An empty
 value is a value: delete the line to get the default. The kit service name
@@ -205,7 +201,7 @@ connection.
 ## Run locally
 
 Node 26 (`nvm use`), a MongoDB replica set, NATS with JetStream and the
-stream `AGENTS`, and an OIDC issuer. The `compose.yaml` in `ai-systems-kit`
+stream `AGENTS`. The `compose.yaml` in `ai-systems-kit`
 starts them.
 
 ```sh
@@ -245,5 +241,5 @@ repo, and the gitops app `kubernetes/ai-systems/ai-systems-agent-manager/prod`
 
 The integration test uses the NATS grants of the user
 `ai-systems-agent-manager` from gitops, an admin user that makes the
-stream, and real RS256 tokens from a local JWKS. Commands for agents:
+stream. Commands for agents:
 `CLAUDE.md`.

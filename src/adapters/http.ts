@@ -7,9 +7,7 @@ import {
   PublishAgentVersionCommandPayloadV1,
   SetAgentEnabledCommandPayloadV1,
 } from "@famashines/ai-systems-contracts";
-import { bearerHook, subjectOf, type JwtVerifier } from "@famashines/ai-systems-kit/auth";
 import {
-  ForbiddenError,
   NotFoundError,
   UnavailableError,
   validate,
@@ -59,13 +57,7 @@ const guard =
     }
   };
 
-export interface HttpDeps extends Deps {
-  verify: JwtVerifier;
-}
-
-export function routes(deps: HttpDeps): Route[] {
-  const owner = bearerHook(deps.verify);
-
+export function routes(deps: Deps): Route[] {
   const commandRoute = <P extends z.ZodType>(
     name: string,
     type: string,
@@ -76,12 +68,8 @@ export function routes(deps: HttpDeps): Route[] {
     method: "POST",
     path: `/internal/commands/${name}`,
     handler: guard(async (request: Request) => {
-      await owner(request);
       const body = (await validate(request, { body: command(type, payload) }))
         .body as CommandEnvelopeV1<z.output<P>>;
-      if (body.actor.id !== subjectOf(request).sub) {
-        throw new ForbiddenError("The actor is not the owner of the token");
-      }
       const { commandId, actor, expectedVersion } = body;
       const { answer, replayed } = await run(deps, {
         commandId,
