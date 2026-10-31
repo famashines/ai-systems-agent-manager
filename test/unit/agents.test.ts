@@ -111,3 +111,13 @@ test("a wrong expectedVersion with a new commandId gives 409 and no event", asyn
   await assert.rejects(publishAgentVersion(deps, publish("a/one", 7)), ConflictError);
   assert.deepEqual(await types(), ["agents.AgentCreated"]);
 });
+
+test("an unknown agent with an expectedVersion gives 409 and no write", async () => {
+  const unknown = "00000000-0000-4000-8000-0000000000ee";
+  await assert.rejects(
+    activateAgentVersion(deps, input({ agentId: unknown, version: 1 }, 3)),
+    ConflictError,
+  );
+  assert.deepEqual(await store.readStream(`agent-${unknown}`), []);
+  assert.equal((await store.readAll({ limit: 1000 })).length, 1);
+});

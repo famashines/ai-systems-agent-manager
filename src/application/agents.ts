@@ -6,7 +6,7 @@ import type {
   PublishAgentVersionCommandPayloadV1,
   SetAgentEnabledCommandPayloadV1,
 } from "@famashines/ai-systems-contracts";
-import type { EventStore } from "@famashines/ai-systems-kit/event-store";
+import { ConcurrencyError, type EventStore } from "@famashines/ai-systems-kit/event-store";
 import { ConflictError } from "@famashines/ai-systems-kit/http";
 import type { ClientSession } from "mongodb";
 import {
@@ -68,13 +68,14 @@ async function handle(
 ): Promise<{ answer: Answer; replayed: boolean }> {
   const { state, version } = await load(store, agentId);
   if (input.expectedVersion !== undefined && input.expectedVersion !== version) {
-    const result = await store.append({
+    const result = await store.append<Answer | undefined>({
       streamId: agentStreamId(agentId),
       expectedVersion: -1,
       events: [],
-      command: { commandId: input.commandId, answer: { agentId, version } },
+      command: { commandId: input.commandId, answer: undefined },
     });
-    return { answer: result.answer ?? { agentId, version }, replayed: result.replayed };
+    if (!result.replayed || result.answer === undefined) throw new ConcurrencyError();
+    return { answer: result.answer, replayed: true };
   }
   const events = decide(state, command);
   const published = events.find((event) => event.type === "agents.AgentVersionPublished");
