@@ -217,3 +217,36 @@ test("a command from an actor that is not the owner gives 400", async () => {
   const response = await send("create-agent", "CreateAgent", { name: "guest" }, "agent");
   assert.equal(response.status, 400);
 });
+
+test("a wrong expectedVersion gives 409 with no event, and a retry replays the first answer", async () => {
+  const agentId = seeds[1]?.agentId ?? "";
+  const body = (commandId: string, expectedVersion: number) =>
+    JSON.stringify({
+      commandId,
+      type: "agents.SetAgentEnabled",
+      actor: { kind: "owner", id: "owner-1" },
+      expectedVersion,
+      payload: { agentId, enabled: false },
+    });
+  const post = (text: string) =>
+    fetch(`${base}/internal/commands/set-agent-enabled`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: text,
+    });
+  const count = await events().countDocuments();
+  const wrong = await post(body(randomUUID(), 9));
+  assert.equal(wrong.status, 409);
+  assert.equal(await events().countDocuments(), count);
+  const commandId = randomUUID();
+  const first = await post(body(commandId, 4));
+  assert.equal(first.status, 200);
+  const retry = await post(body(commandId, 4));
+  assert.equal(retry.status, 200);
+  assert.deepEqual(await retry.json(), await first.json());
+  assert.equal(await events().countDocuments(), count + 1);
+  assert.equal(
+    await mongo.db.collection("commands").countDocuments({ _id: commandId as never }),
+    1,
+  );
+});

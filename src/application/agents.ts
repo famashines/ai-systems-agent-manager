@@ -67,6 +67,15 @@ async function handle(
   also?: (session: ClientSession) => Promise<void>,
 ): Promise<{ answer: Answer; replayed: boolean }> {
   const { state, version } = await load(store, agentId);
+  if (input.expectedVersion !== undefined && input.expectedVersion !== version) {
+    const result = await store.append({
+      streamId: agentStreamId(agentId),
+      expectedVersion: -1,
+      events: [],
+      command: { commandId: input.commandId, answer: { agentId, version } },
+    });
+    return { answer: result.answer ?? { agentId, version }, replayed: result.replayed };
+  }
   const events = decide(state, command);
   const published = events.find((event) => event.type === "agents.AgentVersionPublished");
   const answer: Answer = {
@@ -76,7 +85,7 @@ async function handle(
   };
   const result = await store.append({
     streamId: agentStreamId(agentId),
-    expectedVersion: input.expectedVersion ?? version,
+    expectedVersion: version,
     events: events.map((event) => ({
       ...event,
       correlationId: input.commandId,
