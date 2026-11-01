@@ -78,29 +78,47 @@ first.
 
 | Method | Path                                            | Auth                 | Does                                                    |
 | ------ | ----------------------------------------------- | -------------------- | ------------------------------------------------------- |
-| POST   | `/internal/commands/create-agent`               | `owner` actor        | `CreateAgent`                                           |
-| POST   | `/internal/commands/publish-agent-version`      | `owner` actor        | `PublishAgentVersion`                                   |
-| POST   | `/internal/commands/activate-agent-version`     | `owner` actor        | `ActivateAgentVersion`                                  |
-| POST   | `/internal/commands/set-agent-enabled`          | `owner` actor        | `SetAgentEnabled`                                       |
+| POST   | `/internal/commands/create-agent`               | owner token          | `CreateAgent`                                           |
+| POST   | `/internal/commands/publish-agent-version`      | owner token          | `PublishAgentVersion`                                   |
+| POST   | `/internal/commands/activate-agent-version`     | owner token          | `ActivateAgentVersion`                                  |
+| POST   | `/internal/commands/set-agent-enabled`          | owner token          | `SetAgentEnabled`                                       |
 | GET    | `/internal/agents/by-name/:name/active-version` | none (NetworkPolicy) | `ActiveAgentVersionResultV1` for a name                 |
 | GET    | `/internal/events?afterPosition=<n>&limit=<m>`  | none (NetworkPolicy) | Replay API: all events in position order                |
 | GET    | `/health`, `/ready`, `/metrics`                 | none                 | Liveness, readiness (`mongo`, `migrations`), Prometheus |
 
 Errors are RFC 9457 problem JSON with a `code` (`@famashines/ai-systems-kit/http`).
 
+### Callers and trust
+
+A NetworkPolicy is L4: it limits pod and port, not the caller. So the
+service does not trust `actor.kind` `owner` in the body (ADR 0028,
+M2-17). A hook of `kit/auth` checks each request on
+`/internal/commands/*`: `Authorization: Bearer <access token>` with the
+role `owner`, issuer `OIDC_ISSUER`, audience `OIDC_AUDIENCE` and `exp`.
+The `actor.id` of the command must be the `sub` of the token. The hook
+is only on `/internal/commands/*`. The read and replay routes stay open
+to the callers that the network lets in.
+
+| Caller        | Paths                                               | Token                    |
+| ------------- | --------------------------------------------------- | ------------------------ |
+| api-gateway   | `POST /internal/commands/*`                         | Forwards the owner token |
+| orchestration | `GET /internal/agents/by-name/:name/active-version` | None                     |
+| projections   | `GET /internal/events`                              | None                     |
+| Prometheus    | `GET /metrics`                                      | None                     |
+
+api-gateway has no agent command routes yet, so no caller sends commands
+today. Its routes must forward the `Authorization` header of the owner.
+
 ### Commands
 
-api-gateway checks the owner token with `kit/auth` (realm role `owner`)
-and sends the command; this service does not check the token (as
-orchestration and prompt-studio). The NetworkPolicy lets only api-gateway
-call the command routes. The body is a
-`CommandEnvelopeV1` with the payload schema of contracts:
+The request needs an owner bearer token (see "Callers and trust"). The
+body is a `CommandEnvelopeV1` with the payload schema of contracts:
 
 ```json
 {
   "commandId": "6f1c2b9e-1d1a-4c55-9b0e-3a7f0d5e8c21",
   "type": "agents.PublishAgentVersion",
-  "actor": { "kind": "owner", "id": "<owner id>" },
+  "actor": { "kind": "owner", "id": "<sub of the token>" },
   "expectedVersion": 3,
   "payload": {
     "agentId": "00000000-0000-4000-8000-00000000a002",
@@ -121,8 +139,8 @@ call the command routes. The body is a
 - `commandId` is the idempotency key (api-gateway takes it from the
   `Idempotency-Key` header). The same `commandId` again gives the first
   answer with 200 and writes nothing.
-- `actor.kind` must be `owner`. api-gateway sets `actor.id` to the `sub`
-  of the token.
+- `actor.kind` must be `owner`. `actor.id` must be the `sub` of the
+  token (api-gateway sets it so).
 - `expectedVersion` is optional. For `create-agent` it can only be `0`
   (else 400). The service always decides on the stream that it read and
   appends with that version, so a change between the read and the append
@@ -142,9 +160,11 @@ the stream (for the next `expectedVersion`). Publish also gives
 | 201    | Create or publish: a new agent or version                               |
 | 200    | Activate or enable; or the same `commandId` came before                 |
 | 400    | The body is not valid (problem JSON with `errors`: paths, never values) |
+| 401    | No token, or a token that is not valid                                  |
+| 403    | No `owner` role, or `actor.id` is not the `sub` of the token            |
 | 404    | The agent or the agent version does not exist                           |
 | 409    | The name exists, the stream changed, or on with no active version       |
-| 503    | MongoDB does not answer                                                 |
+| 503    | MongoDB does not answer, or Keycloak cannot be read                     |
 
 ### `GET /internal/agents/by-name/:name/active-version`
 
@@ -155,9 +175,8 @@ gives 200 with `enabled: false`; the caller decides. An unknown name, or an
 agent with no active version, gives 404. The read uses the event stream,
 so it is strongly consistent with the commands.
 
-No route has a token check. The NetworkPolicy of the service (task M2-09)
-must let only api-gateway call the commands, only orchestration call the
-read, and only projections call the replay API, as for orchestration.
+The read and the replay API have no token check. The NetworkPolicy of
+the service lets only orchestration and projections call them.
 
 ## Data
 
@@ -177,6 +196,8 @@ a name to its agent. It is not a projection: it changes only with
 - The same `commandId` with another body, or on another command route,
   gives the first answer. The kit stores the answer of a command but no
   hash of its body. A later kit version can store a hash and give 409.
+- The JWKS comes over plain HTTP inside the cluster (ARCHITECTURE 11.1,
+  accepted).
 - The `commandId` lookup for a wrong `expectedVersion` is an append with
   `expectedVersion: -1` and no events. The kit checks the `commandId`
   before the version, so a known `commandId` gives its answer, and every
@@ -186,17 +207,20 @@ a name to its agent. It is not a projection: it changes only with
 
 Environment variables (`.env.example` has all of them):
 
-| Variable                                                            | Default         | Content                                   |
-| ------------------------------------------------------------------- | --------------- | ----------------------------------------- |
-| `MONGODB_URI`                                                       | required        | MongoDB connection string (replica set)   |
-| `MONGODB_DATABASE`                                                  | `agent_manager` | Database name                             |
-| `NATS_SERVERS`                                                      | required        | NATS URLs, comma-separated; at least one  |
-| `NATS_USER`                                                         | required        | `ai-systems-agent-manager` on the cluster |
-| `NATS_PASSWORD`                                                     | required        | From the SealedSecret                     |
-| `PORT`                                                              | `8080`          | HTTP port                                 |
-| `LOG_LEVEL`                                                         | `info`          | pino level                                |
-| `RELEASE`                                                           | `local`         | Release id in logs and metrics            |
-| `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | not set         | Traces go over OTLP only when one is set  |
+| Variable                                                            | Default                                         | Content                                   |
+| ------------------------------------------------------------------- | ----------------------------------------------- | ----------------------------------------- |
+| `MONGODB_URI`                                                       | required                                        | MongoDB connection string (replica set)   |
+| `MONGODB_DATABASE`                                                  | `agent_manager`                                 | Database name                             |
+| `NATS_SERVERS`                                                      | required                                        | NATS URLs, comma-separated; at least one  |
+| `NATS_USER`                                                         | required                                        | `ai-systems-agent-manager` on the cluster |
+| `NATS_PASSWORD`                                                     | required                                        | From the SealedSecret                     |
+| `OIDC_ISSUER`                                                       | `https://auth.famashines.com/realms/ai-systems` | Keycloak realm                            |
+| `OIDC_JWKS_URL`                                                     | `<issuer>/protocol/openid-connect/certs`        | JWKS inside the cluster                   |
+| `OIDC_AUDIENCE`                                                     | `ai-systems-app`                                | Audience and `azp` of the token           |
+| `PORT`                                                              | `8080`                                          | HTTP port                                 |
+| `LOG_LEVEL`                                                         | `info`                                          | pino level                                |
+| `RELEASE`                                                           | `local`                                         | Release id in logs and metrics            |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | not set                                         | Traces go over OTLP only when one is set  |
 
 A bad value stops the process at start with the variable name. An empty
 value is a value: delete the line to get the default. The kit service name
@@ -204,6 +228,11 @@ is fixed to `agent-manager`, so the NATS inbox prefix is
 `_INBOX_agent-manager` and the grants of ADR 0023 apply: publish
 `agents.>`, `dlq.agent-manager.>`, `$JS.API.INFO`,
 `$JS.API.STREAM.INFO.AGENTS`; subscribe `_INBOX_agent-manager.>`.
+
+Deploy: set `OIDC_JWKS_URL` to the Keycloak service inside the cluster,
+and add a NetworkPolicy egress from agent-manager to Keycloak on port
+8080 for the JWKS, as for budget. Keycloak is not a readiness check:
+when the JWKS cannot be read, a command gets 503.
 
 At start the service connects to MongoDB, runs the migration
 `000-event-store`, adds the seeds, connects to NATS, starts the relay, and

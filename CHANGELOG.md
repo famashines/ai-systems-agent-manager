@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- `/internal/commands/*` needs an owner bearer token (M2-17, ADR 0028).
+  A path-scoped `kit/auth` hook checks the role `owner`, the issuer, the
+  audience and `exp`: no token or a bad token gives 401, no `owner` role
+  gives 403. The `actor.id` of the command must be the `sub` of the token,
+  else 403. The active version read, the replay API, `/health`, `/ready`
+  and `/metrics` need no token.
+- New env: `OIDC_ISSUER`, `OIDC_JWKS_URL`, `OIDC_AUDIENCE` (the same as
+  budget).
+
 ## 0.1.0
 
 - Agent aggregate on the stream `agent-<agentId>`: `CreateAgent`,
