@@ -21,7 +21,7 @@ Rules for all ai-systems repos: `ai-systems-docs/CLAUDE.md`
 src
 ├── domain/agent.ts            decide, evolve, active version, no I/O
 ├── application/agents.ts      command handlers, the active version read, the Names port
-├── application/seed.ts        the seed agents and their fixed ids
+├── application/seed.ts        the seed agents, their fixed ids, and upgradeOrchestrator
 ├── adapters/http.ts           routes, owner check, zod schemas of the bodies and queries
 ├── adapters/names.ts          the MongoDB collection agent_names
 └── main.ts                    config, wiring by constructor, seeds, start, shutdown

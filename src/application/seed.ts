@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import type { AgentLimits, PromptRef } from "@famashines/ai-systems-contracts";
 import { ConflictError } from "@famashines/ai-systems-kit/http";
 import {
@@ -7,8 +8,9 @@ import {
   initialState,
   type AgentCommand,
   type AgentEvent,
+  type AgentState,
 } from "../domain/agent.ts";
-import type { Deps } from "./agents.ts";
+import { isAgentEvent, type Deps } from "./agents.ts";
 
 export interface Seed {
   agentId: string;
@@ -26,14 +28,16 @@ const models = [
 
 const limits: AgentLimits = { maxCalls: 10, maxTokens: 4096, maxCostMicroUsd: 50_000 };
 
+const orchestrator: Seed = {
+  agentId: "00000000-0000-4000-8000-00000000a001",
+  name: "orchestrator",
+  prompt: { promptId: "a0d53ff1-1eda-4636-bb2f-880df141bcb9", version: 1 },
+  models,
+  limits,
+};
+
 export const seeds: readonly Seed[] = [
-  {
-    agentId: "00000000-0000-4000-8000-00000000a001",
-    name: "orchestrator",
-    prompt: { promptId: "a0d53ff1-1eda-4636-bb2f-880df141bcb9", version: 1 },
-    models,
-    limits,
-  },
+  orchestrator,
   {
     agentId: "00000000-0000-4000-8000-00000000a002",
     name: "writer",
@@ -58,6 +62,8 @@ export function seedEvents({ agentId, name, prompt, models, limits }: Seed): Age
   });
 }
 
+export const seedActor = { kind: "system", id: "agent-manager" } as const;
+
 export interface SeedLogger {
   warn(details: object, message: string): void;
 }
@@ -80,7 +86,7 @@ export async function seed(
           ...event,
           correlationId: commandId,
           causationId: commandId,
-          actor: { kind: "system", id: "agent-manager" },
+          actor: seedActor,
         })),
         also: (session) => deps.names.claim(item.name, item.agentId, session),
       });
@@ -91,4 +97,47 @@ export async function seed(
     }
   }
   return added;
+}
+
+export const orchestratorPromptV2 = {
+  commandId: "b5abcd37-81d4-44c4-ba2c-1b555a1a7df0",
+  prompt: { promptId: orchestrator.prompt.promptId, version: 2 },
+} as const;
+
+export async function upgradeOrchestrator({ store }: Pick<Deps, "store">): Promise<boolean> {
+  const { agentId, models, limits } = orchestrator;
+  const { commandId, prompt } = orchestratorPromptV2;
+  const streamId = agentStreamId(agentId);
+  const stored = await store.readStream(streamId);
+  const state = stored.filter(isAgentEvent).reduce<AgentState>(evolve, initialState);
+  const seedVersion = { agentId, prompt: orchestrator.prompt, models, limits, version: 1 };
+  const isSeed = state.status === "created" && state.active === 1;
+  if (!isSeed || !isDeepStrictEqual(state.versions, [seedVersion])) return false;
+  const published = decide(state, { type: "PublishAgentVersion", agentId, prompt, models, limits });
+  const activated = decide(published.reduce(evolve, state), {
+    type: "ActivateAgentVersion",
+    agentId,
+    version: 2,
+  });
+  const events = [...published, ...activated];
+  try {
+    const result = await store.append({
+      streamId,
+      expectedVersion: stored.length,
+      events: events.map((event) => ({
+        ...event,
+        correlationId: commandId,
+        causationId: commandId,
+        actor: seedActor,
+      })),
+      command: {
+        commandId,
+        answer: { agentId, version: stored.length + events.length, agentVersion: 2 },
+      },
+    });
+    return !result.replayed;
+  } catch (error) {
+    if (error instanceof ConflictError) return false;
+    throw error;
+  }
 }

@@ -54,12 +54,24 @@ a conflict, skips the seed and writes a warn log with the agent name. A
 seed never changes an agent that exists.
 To change a seed agent, publish and activate a new version.
 
+After the seeds, the step `upgradeOrchestrator` points the seed
+`orchestrator` agent at version 2 of its prompt. It is one append of
+`AgentVersionPublished` (version 2, prompt version 2, the seed models and
+limits) and `AgentVersionActivated` (2), with a fixed `commandId` and the
+seed actor. It appends only when the agent is still the seed agent: one
+version, the seed version 1, and it is active. The append is pinned to
+the stream version that it read. It never changes an agent that the owner
+changed, and it does not change `enabled`. A second pod gets the first
+answer of the `commandId`, or a conflict, and writes nothing. agent-manager
+does not check prompt-studio, so prompt-studio with version 2 must deploy
+first.
+
 The ids are fixed, UUID v4 in form, and the same in prompt-studio:
 
-| Agent          | `agentId`                              | Prompt `promptId` (version 1)          |
-| -------------- | -------------------------------------- | -------------------------------------- |
-| `orchestrator` | `00000000-0000-4000-8000-00000000a001` | `a0d53ff1-1eda-4636-bb2f-880df141bcb9` |
-| `writer`       | `00000000-0000-4000-8000-00000000a002` | `cc74090a-534e-4072-8bfd-e6c5b9f22f41` |
+| Agent          | `agentId`                              | Prompt `promptId`                      | Prompt version              |
+| -------------- | -------------------------------------- | -------------------------------------- | --------------------------- |
+| `orchestrator` | `00000000-0000-4000-8000-00000000a001` | `a0d53ff1-1eda-4636-bb2f-880df141bcb9` | 1, then 2 (agent version 2) |
+| `writer`       | `00000000-0000-4000-8000-00000000a002` | `cc74090a-534e-4072-8bfd-e6c5b9f22f41` | 1                           |
 
 Both seeds have the same model chain and limits:
 
@@ -249,8 +261,8 @@ and add a NetworkPolicy egress from agent-manager to Keycloak on port
 when the JWKS cannot be read, a command gets 503.
 
 At start the service connects to MongoDB, runs the migration
-`000-event-store`, adds the seeds, connects to NATS, starts the relay, and
-listens. A SIGTERM or SIGINT before the server listens stops the process at
+`000-event-store`, adds the seeds, runs `upgradeOrchestrator`, connects
+to NATS, starts the relay, and listens. A SIGTERM or SIGINT before the server listens stops the process at
 once with exit code 143. After that, the graceful shutdown of `kit/http`
 applies.
 

@@ -9,7 +9,7 @@ import { createLogger, startTelemetry } from "@famashines/ai-systems-kit/observa
 import { z } from "zod";
 import { routes } from "./adapters/http.ts";
 import { mongoNames } from "./adapters/names.ts";
-import { seed } from "./application/seed.ts";
+import { seed, upgradeOrchestrator } from "./application/seed.ts";
 
 export const service = "agent-manager";
 
@@ -58,6 +58,9 @@ export async function start(config: Readonly<Config>, options: { drainDelayMs?: 
   };
   const added = await seed(deps, logger);
   if (added.length > 0) logger.info({ agents: added }, "seed agents added");
+  if (await upgradeOrchestrator(deps)) {
+    logger.info({ agent: "orchestrator", prompt: 2 }, "seed agent points at prompt version 2");
+  }
   logger.info("connecting to NATS");
   const nats = await connectNats({
     servers: config.NATS_SERVERS,
