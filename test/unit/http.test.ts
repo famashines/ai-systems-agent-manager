@@ -4,7 +4,7 @@ import type { JwtVerifier } from "@famashines/ai-systems-kit/auth";
 import { createService, ForbiddenError, UnauthorizedError } from "@famashines/ai-systems-kit/http";
 import { createLogger } from "@famashines/ai-systems-kit/observability";
 import { createMemoryEventStore, fakeClock, fakeIds } from "@famashines/ai-systems-kit/testing";
-import { commandsNeedOwner, routes } from "../../src/adapters/http.ts";
+import { routes } from "../../src/adapters/http.ts";
 import { AgentNameTakenError, type Names } from "../../src/application/agents.ts";
 import { seed, seeds } from "../../src/application/seed.ts";
 
@@ -29,8 +29,7 @@ const verify: JwtVerifier = (token) =>
   (tokens[token] ?? (() => Promise.reject(new UnauthorizedError())))(token);
 const app = createService({
   logger: createLogger({ service: "agent-manager", release: "test", level: "silent" }),
-  before: [commandsNeedOwner(verify)],
-  routes: routes(deps),
+  routes: routes({ ...deps, verify }),
   drainDelayMs: 0,
 });
 let base: string;
@@ -105,7 +104,7 @@ const codeOf = async (response: Response) => ((await response.json()) as { code:
 
 test("no token or a bad token gives 401, no owner role gives 403, on each command", async () => {
   const count = (await store.readAll({ limit: 1000 })).length;
-  for (const [route, body] of [...guarded(), ["unknown", {}] as const]) {
+  for (const [route, body] of guarded()) {
     for (const authorization of [null, "Bearer bad", "Basic YTpi"]) {
       const response = await send(route, body, authorization);
       assert.equal(response.status, 401, `${route} ${String(authorization)}`);
@@ -114,6 +113,28 @@ test("no token or a bad token gives 401, no owner role gives 403, on each comman
     const response = await send(route, body, "Bearer guest");
     assert.equal(response.status, 403, route);
     assert.equal(await codeOf(response), "forbidden");
+  }
+  assert.equal((await store.readAll({ limit: 1000 })).length, count);
+});
+
+test("no token gives 401 before the body is read, also on a path with empty segments", async () => {
+  const count = (await store.readAll({ limit: 1000 })).length;
+  for (const [route, valid] of guarded()) {
+    for (const path of [
+      `/internal/commands/${route}`,
+      `//internal/commands/${route}`,
+      `/internal//commands/${route}`,
+    ]) {
+      for (const body of ["{}", "not json", JSON.stringify(valid)]) {
+        const response = await fetch(`${base}${path}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body,
+        });
+        assert.equal(response.status, 401, `${path} ${body}`);
+        assert.equal(await codeOf(response), "unauthorized");
+      }
+    }
   }
   assert.equal((await store.readAll({ limit: 1000 })).length, count);
 });

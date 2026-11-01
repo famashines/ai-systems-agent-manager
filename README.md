@@ -92,12 +92,17 @@ Errors are RFC 9457 problem JSON with a `code` (`@famashines/ai-systems-kit/http
 
 A NetworkPolicy is L4: it limits pod and port, not the caller. So the
 service does not trust `actor.kind` `owner` in the body (ADR 0028,
-M2-17). A hook of `kit/auth` checks each request on
-`/internal/commands/*`: `Authorization: Bearer <access token>` with the
-role `owner`, issuer `OIDC_ISSUER`, audience `OIDC_AUDIENCE` and `exp`.
-The `actor.id` of the command must be the `sub` of the token. The hook
-is only on `/internal/commands/*`. The read and replay routes stay open
-to the callers that the network lets in.
+M2-17). The command route factory checks the token first, with
+`bearerHook` of `kit/auth`, as budget does:
+`Authorization: Bearer <access token>` with the role `owner`, issuer
+`OIDC_ISSUER`, audience `OIDC_AUDIENCE` and `exp`. The check comes before the body is read, so a
+caller with no token gets 401 and no validation errors. The check is in
+the handler, not on a path prefix, so it also applies to a path with
+empty segments (for example `//internal/commands/create-agent`, which the
+kit router matches). Then the `actor.id` of the command must be the `sub`
+of the token. A new command route made with the factory gets the same
+check. The read and replay routes have no check and stay open to the
+callers that the network lets in.
 
 | Caller        | Paths                                               | Token                    |
 | ------------- | --------------------------------------------------- | ------------------------ |
@@ -155,16 +160,16 @@ The answer is `{ agentId, version }`, where `version` is the version of
 the stream (for the next `expectedVersion`). Publish also gives
 `agentVersion`, the new agent version number.
 
-| Status | When                                                                    |
-| ------ | ----------------------------------------------------------------------- |
-| 201    | Create or publish: a new agent or version                               |
-| 200    | Activate or enable; or the same `commandId` came before                 |
-| 400    | The body is not valid (problem JSON with `errors`: paths, never values) |
-| 401    | No token, or a token that is not valid                                  |
-| 403    | No `owner` role, or `actor.id` is not the `sub` of the token            |
-| 404    | The agent or the agent version does not exist                           |
-| 409    | The name exists, the stream changed, or on with no active version       |
-| 503    | MongoDB does not answer, or Keycloak cannot be read                     |
+| Status | When                                                                                                                                                                        |
+| ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 201    | Create or publish: a new agent or version                                                                                                                                   |
+| 200    | Activate or enable; or the same `commandId` came before                                                                                                                     |
+| 400    | The body is not valid (problem JSON with `errors`: paths, never values)                                                                                                     |
+| 401    | No token, or a token that is not valid                                                                                                                                      |
+| 403    | No `owner` role, or `actor.id` is not the `sub` of the token                                                                                                                |
+| 404    | The agent or the agent version does not exist                                                                                                                               |
+| 409    | The name exists, the stream changed, or on with no active version                                                                                                           |
+| 503    | MongoDB does not answer, or Keycloak cannot be read. The `detail` is a fixed text: `The database is not available` or `The keys of the identity provider are not available` |
 
 ### `GET /internal/agents/by-name/:name/active-version`
 
