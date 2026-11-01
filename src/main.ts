@@ -7,7 +7,7 @@ import { connectNats, startRelay } from "@famashines/ai-systems-kit/messaging";
 import { connectMongo, runMigrations } from "@famashines/ai-systems-kit/mongo";
 import { createLogger, startTelemetry } from "@famashines/ai-systems-kit/observability";
 import { z } from "zod";
-import { commandsNeedOwner, routes } from "./adapters/http.ts";
+import { routes } from "./adapters/http.ts";
 import { mongoNames } from "./adapters/names.ts";
 import { seed } from "./application/seed.ts";
 
@@ -76,8 +76,7 @@ export async function start(config: Readonly<Config>, options: { drainDelayMs?: 
   });
   const app = createService({
     logger,
-    before: [commandsNeedOwner(verify)],
-    routes: routes(deps),
+    routes: routes({ ...deps, verify }),
     readiness: {
       mongo: mongo.ready,
       migrations: async () =>

@@ -17,7 +17,12 @@ const names = { claim: down, find: down };
 const newId = () => "00000000-0000-4000-8000-000000000001";
 const app = createService({
   logger: createLogger({ service: "agent-manager", release: "test", level: "silent" }),
-  routes: routes({ store, names, newId }),
+  routes: routes({
+    store,
+    names,
+    newId,
+    verify: () => Promise.resolve({ sub: "owner-1", roles: ["owner"], exp: 0 }),
+  }),
   drainDelayMs: 0,
 });
 let base: string;

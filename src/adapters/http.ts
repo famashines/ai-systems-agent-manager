@@ -14,7 +14,6 @@ import {
   UnavailableError,
   validate,
   type Handler,
-  type Hook,
   type Request,
   type Route,
 } from "@famashines/ai-systems-kit/http";
@@ -50,11 +49,6 @@ export function toHttpError(error: unknown): unknown {
   return error;
 }
 
-export const commandsNeedOwner = (verify: JwtVerifier): Hook => {
-  const owner = bearerHook(verify);
-  return (request) => (request.path.startsWith("/internal/commands/") ? owner(request) : undefined);
-};
-
 const guard =
   (handler: Handler): Handler =>
   async (request) => {
@@ -65,7 +59,12 @@ const guard =
     }
   };
 
-export function routes(deps: Deps): Route[] {
+export interface HttpDeps extends Deps {
+  verify: JwtVerifier;
+}
+
+export function routes({ verify, ...deps }: HttpDeps): Route[] {
+  const owner = bearerHook(verify);
   const commandRoute = <P>(
     name: string,
     schema: z.ZodType,
@@ -75,6 +74,7 @@ export function routes(deps: Deps): Route[] {
     method: "POST",
     path: `/internal/commands/${name}`,
     handler: guard(async (request: Request) => {
+      await owner(request);
       const body = (await validate(request, { body: schema })).body as CommandEnvelopeV1<P>;
       const { commandId, actor, expectedVersion } = body;
       if (actor.id !== subjectOf(request).sub) {

@@ -205,6 +205,17 @@ test("a command needs an owner token signed by the JWKS key; the reads need none
     );
     assert.equal(response.status, status, authorization);
   }
+  for (const path of [
+    "//internal/commands/set-agent-enabled",
+    "/internal//commands/set-agent-enabled",
+  ]) {
+    const response = await fetch(`${base}${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    assert.equal(response.status, 401, path);
+  }
   assert.equal(await events().countDocuments(), count);
   const read = await fetch(`${base}/internal/agents/by-name/writer/active-version`);
   assert.equal(read.status, 200);
