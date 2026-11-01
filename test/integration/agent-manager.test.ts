@@ -17,7 +17,7 @@ import {
   waitFor,
   type Started,
 } from "@famashines/ai-systems-kit/testing";
-import { seeds } from "../../src/application/seed.ts";
+import { orchestratorPromptV2, seeds } from "../../src/application/seed.ts";
 import { envSchema, start } from "../../src/main.ts";
 
 const agentManagerGrants = [
@@ -224,14 +224,15 @@ test("a command needs an owner token signed by the JWKS key; the reads need none
   assert.equal((await fetch(`${base}/internal/events`)).status, 200);
 });
 
-test("the seeds are in MongoDB once and in AGENTS once, after a restart too", async () => {
+test("the seeds and the orchestrator upgrade are in MongoDB once and in AGENTS once, after a restart too", async () => {
   await stopService();
+  await mongo.db.collection("commands").deleteMany({});
   await startService();
-  for (const item of seeds) {
+  for (const [item, count] of seeds.map((item, index) => [item, index === 0 ? 6 : 4] as const)) {
     const stored = await events()
       .find({ streamId: `agent-${item.agentId}` })
       .toArray();
-    assert.equal(stored.length, 4);
+    assert.equal(stored.length, count);
   }
   await allPublished();
   const published = await subjects();
@@ -244,7 +245,12 @@ test("the active version of a seed is the contracts result", async () => {
   const read = await active("orchestrator");
   assert.equal(read.status, 200);
   const result = ActiveAgentVersionResultV1.parse(read.body);
-  assert.deepEqual(result, { ...seeds[0], version: 1, enabled: true });
+  assert.deepEqual(result, {
+    ...seeds[0],
+    prompt: orchestratorPromptV2.prompt,
+    version: 2,
+    enabled: true,
+  });
 });
 
 test("a new agent, two versions and a rollback", async () => {
@@ -276,7 +282,7 @@ test("a new agent, two versions and a rollback", async () => {
   assert.deepEqual(result.models, ["openai/gpt-4.1-nano"]);
   await allPublished();
   const types = [...(await subjects()).values()].filter((subject) => subject.startsWith("agents."));
-  assert.equal(types.filter((type) => type === "agents.AgentVersionActivated").length, 4);
+  assert.equal(types.filter((type) => type === "agents.AgentVersionActivated").length, 5);
 });
 
 test("a name that exists gives 409 and writes no event", async () => {

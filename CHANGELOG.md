@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Seed step `upgradeOrchestrator`: the seed `orchestrator` agent gets
+  version 2 with prompt version 2, active, only when the agent is still
+  the seed agent. An agent that the owner changed stays. Deploy
+  prompt-studio with prompt version 2 first.
 - `GET /internal/agents/:agentId/active-version`: the same
   `ActiveAgentVersionResultV1` as the read by name, for an agent id. No
   token (the same as the read by name). A bad id gives 400. An unknown

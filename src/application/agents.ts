@@ -49,7 +49,7 @@ export class AgentNameTakenError extends ConflictError {
   }
 }
 
-const isAgentEvent = <E extends { type: string }>(
+export const isAgentEvent = <E extends { type: string }>(
   event: E,
 ): event is Extract<E, { type: AgentEvent["type"] }> => event.type.startsWith("agents.");
 
