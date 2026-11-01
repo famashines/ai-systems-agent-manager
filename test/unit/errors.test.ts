@@ -37,7 +37,11 @@ after(async () => {
 });
 
 test("the reads give 503 with no detail when MongoDB is down", async () => {
-  for (const path of ["/internal/events", "/internal/agents/by-name/writer/active-version"]) {
+  for (const path of [
+    "/internal/events",
+    "/internal/agents/by-name/writer/active-version",
+    `/internal/agents/${newId()}/active-version`,
+  ]) {
     const response = await fetch(`${base}${path}`);
     assert.equal(response.status, 503);
     const text = await response.text();

@@ -122,10 +122,17 @@ export const activateAgentVersion = (
 export const setAgentEnabled = (deps: Deps, input: Input<SetAgentEnabledCommandPayloadV1>) =>
   handle(deps, input.payload.agentId, input, { type: "SetAgentEnabled", ...input.payload });
 
+export async function findActiveVersionById(
+  { store }: Deps,
+  agentId: string,
+): Promise<ActiveAgentVersionResultV1 | undefined> {
+  return activeVersion((await load(store, agentId)).state);
+}
+
 export async function findActiveVersion(
-  { store, names }: Deps,
+  deps: Deps,
   name: string,
 ): Promise<ActiveAgentVersionResultV1 | undefined> {
-  const agentId = await names.find(name);
-  return agentId === undefined ? undefined : activeVersion((await load(store, agentId)).state);
+  const agentId = await deps.names.find(name);
+  return agentId === undefined ? undefined : findActiveVersionById(deps, agentId);
 }
