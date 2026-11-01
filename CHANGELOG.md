@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `GET /internal/agents/:agentId/active-version`: the same
+  `ActiveAgentVersionResultV1` as the read by name, for an agent id. No
+  token (the same as the read by name). A bad id gives 400. An unknown
+  agent or an agent with no active version gives 404.
 - `/internal/commands/*` needs an owner bearer token (M2-17, ADR 0028).
   The command route factory checks the token with `bearerHook` of
   `kit/auth` before it reads the body, as budget does: role `owner`,

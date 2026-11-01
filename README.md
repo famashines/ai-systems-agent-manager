@@ -83,6 +83,7 @@ first.
 | POST   | `/internal/commands/activate-agent-version`     | owner token          | `ActivateAgentVersion`                                  |
 | POST   | `/internal/commands/set-agent-enabled`          | owner token          | `SetAgentEnabled`                                       |
 | GET    | `/internal/agents/by-name/:name/active-version` | none (NetworkPolicy) | `ActiveAgentVersionResultV1` for a name                 |
+| GET    | `/internal/agents/:agentId/active-version`      | none (NetworkPolicy) | `ActiveAgentVersionResultV1` for an agent id            |
 | GET    | `/internal/events?afterPosition=<n>&limit=<m>`  | none (NetworkPolicy) | Replay API: all events in position order                |
 | GET    | `/health`, `/ready`, `/metrics`                 | none                 | Liveness, readiness (`mongo`, `migrations`), Prometheus |
 
@@ -108,6 +109,7 @@ callers that the network lets in.
 | ------------- | --------------------------------------------------- | ------------------------ |
 | api-gateway   | `POST /internal/commands/*`                         | Forwards the owner token |
 | orchestration | `GET /internal/agents/by-name/:name/active-version` | None                     |
+| orchestration | `GET /internal/agents/:agentId/active-version`      | None                     |
 | projections   | `GET /internal/events`                              | None                     |
 | Prometheus    | `GET /metrics`                                      | None                     |
 
@@ -179,6 +181,13 @@ active `AgentVersionPublished`, with `name` and `enabled`. A disabled agent
 gives 200 with `enabled: false`; the caller decides. An unknown name, or an
 agent with no active version, gives 404. The read uses the event stream,
 so it is strongly consistent with the commands.
+
+### `GET /internal/agents/:agentId/active-version`
+
+The read of orchestration for an agent that it knows by id (for example a
+subtask agent). `agentId` is a UUID. The answer is the same as the answer
+of the read by name: `ActiveAgentVersionResultV1`. A bad id gives 400. An
+unknown agent, or an agent with no active version, gives 404.
 
 The read and the replay API have no token check. The NetworkPolicy of
 the service lets only orchestration and projections call them.

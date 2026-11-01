@@ -1,7 +1,9 @@
 import {
   ActivateAgentVersionCommandPayloadV1,
+  ActiveAgentVersionResultV1,
   Actor,
   AgentName,
+  AgentRef,
   CommandEnvelopeV1,
   CreateAgentCommandPayloadV1,
   PublishAgentVersionCommandPayloadV1,
@@ -23,6 +25,7 @@ import {
   activateAgentVersion,
   createAgent,
   findActiveVersion,
+  findActiveVersionById,
   publishAgentVersion,
   setAgentEnabled,
   type Answer,
@@ -90,6 +93,20 @@ export function routes({ verify, ...deps }: HttpDeps): Route[] {
     }),
   });
 
+  const activeVersionRoute = <S extends z.ZodType>(
+    path: string,
+    params: S,
+    find: (params: z.output<S>) => Promise<ActiveAgentVersionResultV1 | undefined>,
+  ): Route => ({
+    method: "GET",
+    path,
+    handler: guard(async (request) => {
+      const result = await find((await validate(request, { params })).params);
+      if (!result) throw new NotFoundError("The agent has no active version");
+      return { body: result };
+    }),
+  });
+
   return [
     commandRoute(
       "create-agent",
@@ -117,16 +134,16 @@ export function routes({ verify, ...deps }: HttpDeps): Route[] {
       setAgentEnabled,
       200,
     ),
-    {
-      method: "GET",
-      path: "/internal/agents/by-name/:name/active-version",
-      handler: guard(async (request) => {
-        const { params } = await validate(request, { params: z.object({ name: AgentName }) });
-        const result = await findActiveVersion(deps, params.name);
-        if (!result) throw new NotFoundError("The agent has no active version");
-        return { body: result };
-      }),
-    },
+    activeVersionRoute(
+      "/internal/agents/by-name/:name/active-version",
+      z.object({ name: AgentName }),
+      ({ name }) => findActiveVersion(deps, name),
+    ),
+    activeVersionRoute(
+      "/internal/agents/:agentId/active-version",
+      z.object({ agentId: AgentRef.shape.agentId }),
+      ({ agentId }) => findActiveVersionById(deps, agentId),
+    ),
     {
       method: "GET",
       path: "/internal/events",

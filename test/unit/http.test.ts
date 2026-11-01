@@ -84,6 +84,8 @@ const publish = async (agentId: string, model: string) => {
 
 const active = (name: string) => fetch(`${base}/internal/agents/by-name/${name}/active-version`);
 
+const activeById = (agentId: string) => fetch(`${base}/internal/agents/${agentId}/active-version`);
+
 const guarded = (overrides: Record<string, unknown> = {}) => {
   const agentId = seeds[0]?.agentId;
   return [
@@ -152,6 +154,7 @@ test("an actor that is not the subject of the token gives 403 on each command", 
 test("the active version read, the replay API, health and ready need no token", async () => {
   for (const path of [
     "/internal/agents/by-name/writer/active-version",
+    `/internal/agents/${seeds[1]?.agentId ?? ""}/active-version`,
     "/internal/events",
     "/health",
     "/ready",
@@ -350,6 +353,22 @@ test("the active version read refuses a bad name and an unknown name", async () 
   assert.equal((await active("orchestrator")).status, 200);
   await problem(await active("Bad_Name"), 400, "validation_failed");
   await problem(await active("unknown"), 404, "not_found");
+});
+
+test("the active version read by id gives the same result as the read by name", async () => {
+  for (const item of seeds) {
+    const response = await activeById(item.agentId);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), await (await active(item.name)).json());
+  }
+});
+
+test("the active version read by id refuses a bad id and an unknown id", async () => {
+  await problem(await activeById("not-a-uuid"), 400, "validation_failed");
+  await problem(await activeById("00000000-0000-4000-8000-0000000000fe"), 404, "not_found");
+  const { agentId } = await create("idle");
+  const response = await activeById(agentId);
+  await problem(response, 404, "not_found");
 });
 
 test("the replay API gives events in position order, in pages", async () => {

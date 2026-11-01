@@ -219,6 +219,8 @@ test("a command needs an owner token signed by the JWKS key; the reads need none
   assert.equal(await events().countDocuments(), count);
   const read = await fetch(`${base}/internal/agents/by-name/writer/active-version`);
   assert.equal(read.status, 200);
+  const byId = await fetch(`${base}/internal/agents/${agentId}/active-version`);
+  assert.equal(byId.status, 200);
   assert.equal((await fetch(`${base}/internal/events`)).status, 200);
 });
 
