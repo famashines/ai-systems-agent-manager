@@ -7,11 +7,14 @@ import {
   PublishAgentVersionCommandPayloadV1,
   SetAgentEnabledCommandPayloadV1,
 } from "@famashines/ai-systems-contracts";
+import { bearerHook, subjectOf, type JwtVerifier } from "@famashines/ai-systems-kit/auth";
 import {
+  ForbiddenError,
   NotFoundError,
   UnavailableError,
   validate,
   type Handler,
+  type Hook,
   type Request,
   type Route,
 } from "@famashines/ai-systems-kit/http";
@@ -47,6 +50,11 @@ export function toHttpError(error: unknown): unknown {
   return error;
 }
 
+export const commandsNeedOwner = (verify: JwtVerifier): Hook => {
+  const owner = bearerHook(verify);
+  return (request) => (request.path.startsWith("/internal/commands/") ? owner(request) : undefined);
+};
+
 const guard =
   (handler: Handler): Handler =>
   async (request) => {
@@ -69,6 +77,9 @@ export function routes(deps: Deps): Route[] {
     handler: guard(async (request: Request) => {
       const body = (await validate(request, { body: schema })).body as CommandEnvelopeV1<P>;
       const { commandId, actor, expectedVersion } = body;
+      if (actor.id !== subjectOf(request).sub) {
+        throw new ForbiddenError("The actor is not the subject of the token");
+      }
       const { answer, replayed } = await run(deps, {
         commandId,
         actor,

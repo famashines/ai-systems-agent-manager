@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
-import { createService } from "@famashines/ai-systems-kit/http";
+import type { JwtVerifier } from "@famashines/ai-systems-kit/auth";
+import { createService, ForbiddenError, UnauthorizedError } from "@famashines/ai-systems-kit/http";
 import { createLogger } from "@famashines/ai-systems-kit/observability";
 import { createMemoryEventStore, fakeClock, fakeIds } from "@famashines/ai-systems-kit/testing";
-import { routes } from "../../src/adapters/http.ts";
+import { commandsNeedOwner, routes } from "../../src/adapters/http.ts";
 import { AgentNameTakenError, type Names } from "../../src/application/agents.ts";
 import { seed, seeds } from "../../src/application/seed.ts";
 
@@ -20,8 +21,15 @@ const names: Names = {
 };
 const deps = { store, names, newId: fakeIds(2) };
 const quiet = { warn: () => undefined };
+const tokens: Record<string, JwtVerifier> = {
+  owner: () => Promise.resolve({ sub: "owner-1", roles: ["owner"], exp: 0 }),
+  guest: () => Promise.reject(new ForbiddenError("The role is missing")),
+};
+const verify: JwtVerifier = (token) =>
+  (tokens[token] ?? (() => Promise.reject(new UnauthorizedError())))(token);
 const app = createService({
   logger: createLogger({ service: "agent-manager", release: "test", level: "silent" }),
+  before: [commandsNeedOwner(verify)],
   routes: routes(deps),
   drainDelayMs: 0,
 });
@@ -42,10 +50,13 @@ const owner = { kind: "owner", id: "owner-1" } as const;
 const prompt = { promptId: "cc74090a-534e-4072-8bfd-e6c5b9f22f41", version: 1 };
 const limits = { maxCalls: 5, maxTokens: 1000, maxCostMicroUsd: 5000 };
 
-const send = (name: string, body: unknown) =>
+const send = (name: string, body: unknown, authorization: string | null = "Bearer owner") =>
   fetch(`${base}/internal/commands/${name}`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      ...(authorization === null ? {} : { authorization }),
+    },
     body: JSON.stringify(body),
   });
 
@@ -73,6 +84,60 @@ const publish = async (agentId: string, model: string) => {
 };
 
 const active = (name: string) => fetch(`${base}/internal/agents/by-name/${name}/active-version`);
+
+const guarded = (overrides: Record<string, unknown> = {}) => {
+  const agentId = seeds[0]?.agentId;
+  return [
+    ["create-agent", envelope("CreateAgent", { name: "guarded" }, overrides)],
+    [
+      "publish-agent-version",
+      envelope("PublishAgentVersion", { agentId, prompt, models: ["a/b"], limits }, overrides),
+    ],
+    [
+      "activate-agent-version",
+      envelope("ActivateAgentVersion", { agentId, version: 1 }, overrides),
+    ],
+    ["set-agent-enabled", envelope("SetAgentEnabled", { agentId, enabled: false }, overrides)],
+  ] as const;
+};
+
+const codeOf = async (response: Response) => ((await response.json()) as { code: string }).code;
+
+test("no token or a bad token gives 401, no owner role gives 403, on each command", async () => {
+  const count = (await store.readAll({ limit: 1000 })).length;
+  for (const [route, body] of [...guarded(), ["unknown", {}] as const]) {
+    for (const authorization of [null, "Bearer bad", "Basic YTpi"]) {
+      const response = await send(route, body, authorization);
+      assert.equal(response.status, 401, `${route} ${String(authorization)}`);
+      assert.equal(await codeOf(response), "unauthorized");
+    }
+    const response = await send(route, body, "Bearer guest");
+    assert.equal(response.status, 403, route);
+    assert.equal(await codeOf(response), "forbidden");
+  }
+  assert.equal((await store.readAll({ limit: 1000 })).length, count);
+});
+
+test("an actor that is not the subject of the token gives 403 on each command", async () => {
+  const count = (await store.readAll({ limit: 1000 })).length;
+  for (const [route, body] of guarded({ actor: { kind: "owner", id: "owner-2" } })) {
+    const response = await send(route, body);
+    assert.equal(response.status, 403, route);
+    assert.equal(await codeOf(response), "forbidden");
+  }
+  assert.equal((await store.readAll({ limit: 1000 })).length, count);
+});
+
+test("the active version read, the replay API, health and ready need no token", async () => {
+  for (const path of [
+    "/internal/agents/by-name/writer/active-version",
+    "/internal/events",
+    "/health",
+    "/ready",
+  ]) {
+    assert.equal((await fetch(`${base}${path}`)).status, 200, path);
+  }
+});
 
 test("the seeds give an enabled orchestrator and writer with version 1", async () => {
   for (const item of seeds) {
